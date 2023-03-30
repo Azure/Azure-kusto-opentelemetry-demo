@@ -1,12 +1,13 @@
 # extra settings to be merged into OpenTelemetry Collector configuration
 # do not delete this file
+
 exporters:
   azuredataexplorer:
     cluster_uri: #set clusterRui eg: "https://somecluster.eastus.dev.kusto.windows.net"
     # Client Id
     application_id: #set applicationId
     # The client secret for the client
-    application_key: #set application key 
+    application_key: #set application key
     # The tenant
     tenant_id: #set tenant id
     # database for the logs
@@ -18,10 +19,10 @@ exporters:
     # logs_table_json_mapping: "rawlogs_mapping"
     # traces_table_json_mapping: "rawtraces_mapping"
     # type of ingestion managed or queued
-    ingestion_type : "managed"
+    ingestion_type: "managed"
   # logging:
   #   logLevel: debug
-    
+
 
 service:
   pipelines:
