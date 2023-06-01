@@ -1,16 +1,6 @@
 # Copyright The OpenTelemetry Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+
 
 defmodule Featureflagservice.MixProject do
   use Mix.Project
@@ -54,7 +44,7 @@ defmodule Featureflagservice.MixProject do
     [
       {:phoenix, "~> 1.6.9"},
       {:phoenix_ecto, "~> 4.4"},
-      {:ecto_sql, "~> 3.6"},
+      {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 3.0"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
@@ -73,7 +63,7 @@ defmodule Featureflagservice.MixProject do
       {:opentelemetry_api, "~> 1.2.1"},
       {:opentelemetry, "~> 1.2.1"},
       {:opentelemetry_phoenix, "~> 1.0.0"},
-      {:opentelemetry_ecto, "~> 1.0.0"}
+      {:opentelemetry_ecto, "~> 1.1.1"}
     ]
   end
 

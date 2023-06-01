@@ -1,21 +1,11 @@
-// Copyright 2020 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 using System.Diagnostics;
 using System.Threading.Tasks;
 using Grpc.Core;
+using OpenTelemetry.Trace;
 using cartservice.cartstore;
+using cartservice.featureflags;
 using Oteldemo;
 
 namespace cartservice.services
@@ -23,11 +13,14 @@ namespace cartservice.services
     public class CartService : Oteldemo.CartService.CartServiceBase
     {
         private readonly static Empty Empty = new Empty();
+        private readonly static ICartStore BadCartStore = new RedisCartStore("badhost:1234");
         private readonly ICartStore _cartStore;
+        private readonly FeatureFlagHelper _featureFlagHelper;
 
-        public CartService(ICartStore cartStore)
+        public CartService(ICartStore cartStore, FeatureFlagHelper featureFlagService)
         {
             _cartStore = cartStore;
+            _featureFlagHelper = featureFlagService;
         }
 
         public async override Task<Empty> AddItem(AddItemRequest request, ServerCallContext context)
@@ -64,7 +57,24 @@ namespace cartservice.services
             activity?.SetTag("app.user.id", request.UserId);
             activity?.AddEvent(new("Empty cart"));
 
-            await _cartStore.EmptyCartAsync(request.UserId);
+            try
+            {
+                if (await _featureFlagHelper.GenerateCartError())
+                {
+                    await BadCartStore.EmptyCartAsync(request.UserId);
+                }
+                else
+                {
+                    await _cartStore.EmptyCartAsync(request.UserId);
+                }
+            }
+            catch (RpcException ex)
+            {
+                Activity.Current?.RecordException(ex);
+                Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                throw;
+            }
+
             return Empty;
         }
     }
