@@ -29,7 +29,7 @@ const CheckoutItem = ({
   return (
     <S.CheckoutItem data-cy={CypressFields.CheckoutItem}>
       <S.ItemDetails>
-        <S.ItemImage src={picture} alt={name} />
+        <S.ItemImage src={"/images/products/" + picture} alt={name} />
         <S.Details>
           <S.ItemName>{name}</S.ItemName>
           <p>Quantity: {quantity}</p>
@@ -52,7 +52,7 @@ const CheckoutItem = ({
         )}
       </S.ShippingData>
       <S.Status>
-        <Image src="/icons/Check.svg" alt="check" height="14px" width="16px" /> <span>Done</span>
+        <Image src="/icons/Check.svg" alt="check" height="14" width="16" /> <span>Done</span>
       </S.Status>
     </S.CheckoutItem>
   );

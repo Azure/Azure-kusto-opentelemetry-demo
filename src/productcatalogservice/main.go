@@ -2,41 +2,46 @@
 // SPDX-License-Identifier: Apache-2.0
 package main
 
+//go:generate go install google.golang.org/protobuf/cmd/protoc-gen-go
+//go:generate go install google.golang.org/grpc/cmd/protoc-gen-go-grpc
+//go:generate protoc --go_out=./ --go-grpc_out=./ --proto_path=../../pb ../../pb/demo.proto
+
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	pb "github.com/opentelemetry/opentelemetry-demo/src/productcatalogservice/genproto/oteldemo"
 	"github.com/sirupsen/logrus"
+
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
-	"go.opentelemetry.io/otel/metric/global"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
-
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"google.golang.org/protobuf/encoding/protojson"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+
+	pb "github.com/opentelemetry/opentelemetry-demo/src/productcatalogservice/genproto/oteldemo"
 )
 
 var (
@@ -48,7 +53,12 @@ var (
 
 func init() {
 	log = logrus.New()
-	catalog = readCatalogFile()
+	var err error
+	catalog, err = readProductFiles()
+	if err != nil {
+		log.Fatalf("Reading Product Files: %v", err)
+		os.Exit(1)
+	}
 }
 
 func initResource() *sdkresource.Resource {
@@ -96,7 +106,7 @@ func initMeterProvider() *sdkmetric.MeterProvider {
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
 		sdkmetric.WithResource(initResource()),
 	)
-	global.SetMeterProvider(mp)
+	otel.SetMeterProvider(mp)
 	return mp
 }
 
@@ -106,6 +116,7 @@ func main() {
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Fatalf("Tracer Provider Shutdown: %v", err)
 		}
+		log.Println("Shutdown tracer provider")
 	}()
 
 	mp := initMeterProvider()
@@ -113,6 +124,7 @@ func main() {
 		if err := mp.Shutdown(context.Background()); err != nil {
 			log.Fatalf("Error shutting down meter provider: %v", err)
 		}
+		log.Println("Shutdown meter provider")
 	}()
 
 	err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second))
@@ -123,7 +135,7 @@ func main() {
 	svc := &productCatalog{}
 	var port string
 	mustMapEnv(&port, "PRODUCT_CATALOG_SERVICE_PORT")
-	mustMapEnv(&svc.featureFlagSvcAddr, "FEATURE_FLAG_GRPC_SERVICE_ADDR")
+	svc.featureFlagSvcAddr = os.Getenv("FEATURE_FLAG_GRPC_SERVICE_ADDR")
 
 	log.Infof("ProductCatalogService gRPC server started on port: %s", port)
 
@@ -133,15 +145,27 @@ func main() {
 	}
 
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
-		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
 
 	reflection.Register(srv)
 
 	pb.RegisterProductCatalogServiceServer(srv, svc)
 	healthpb.RegisterHealthServer(srv, svc)
-	srv.Serve(ln)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGKILL)
+	defer cancel()
+
+	go func() {
+		if err := srv.Serve(ln); err != nil {
+			log.Fatalf("Failed to serve gRPC server, err: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+
+	srv.GracefulStop()
+	log.Println("ProductCatalogService gRPC server stopped")
 }
 
 type productCatalog struct {
@@ -149,18 +173,45 @@ type productCatalog struct {
 	pb.UnimplementedProductCatalogServiceServer
 }
 
-func readCatalogFile() []*pb.Product {
-	catalogJSON, err := ioutil.ReadFile("products.json")
+func readProductFiles() ([]*pb.Product, error) {
+
+	// find all .json files in the products directory
+	entries, err := os.ReadDir("./products")
 	if err != nil {
-		log.Fatalf("Reading Catalog File: %v", err)
+		return nil, err
 	}
 
-	var res pb.ListProductsResponse
-	if err := protojson.Unmarshal(catalogJSON, &res); err != nil {
-		log.Fatalf("Parsing Catalog JSON: %v", err)
+	jsonFiles := make([]fs.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") {
+			info, err := entry.Info()
+			if err != nil {
+				return nil, err
+			}
+			jsonFiles = append(jsonFiles, info)
+		}
 	}
 
-	return res.Products
+	// read the contents of each .json file and unmarshal into a ListProductsResponse
+	// then append the products to the catalog
+	var products []*pb.Product
+	for _, f := range jsonFiles {
+		jsonData, err := os.ReadFile("./products/" + f.Name())
+		if err != nil {
+			return nil, err
+		}
+
+		var res pb.ListProductsResponse
+		if err := protojson.Unmarshal(jsonData, &res); err != nil {
+			return nil, err
+		}
+
+		products = append(products, res.Products...)
+	}
+
+	log.Infof("Loaded %d products", len(products))
+
+	return products, nil
 }
 
 func mustMapEnv(target *string, key string) {
@@ -242,7 +293,7 @@ func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProdu
 }
 
 func (p *productCatalog) checkProductFailure(ctx context.Context, id string) bool {
-	if id != "OLJCESPC7Z" {
+	if id != "OLJCESPC7Z" || p.featureFlagSvcAddr == "" {
 		return false
 	}
 
@@ -270,7 +321,6 @@ func (p *productCatalog) checkProductFailure(ctx context.Context, id string) boo
 func createClient(ctx context.Context, svcAddr string) (*grpc.ClientConn, error) {
 	return grpc.DialContext(ctx, svcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor()),
-		grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 }
