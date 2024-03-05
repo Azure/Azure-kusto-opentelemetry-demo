@@ -28,16 +28,23 @@
       "# Copyright The OpenTelemetry Authors",
       "# SPDX-License-Identifier: Apache-2.0"
     ],
+    "**/*.sql": [
+      "-- Copyright The OpenTelemetry Authors",
+      "-- SPDX-License-Identifier: Apache-2.0"
+    ],
     "**/{Dockerfile,Makefile}": [
       "# Copyright The OpenTelemetry Authors",
       "# SPDX-License-Identifier: Apache-2.0"
     ],
     "ignore": [
         "node_modules/",
+        "src/accountingservice/genproto/",
         "src/cartservice/src/obj/",
         "src/cartservice/tests/obj/",
+        "src/checkoutservice/genproto/",
         "src/featureflagservice/assets/vendor/",
         "src/featureflagservice/priv/",
+        "src/productcatalogservice/genproto/",
         "internal/tools/"
     ]
   }
