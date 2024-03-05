@@ -5,23 +5,37 @@
 
 
 import json
+import os
 import random
 import uuid
 from locust import HttpUser, task, between
+from locust_plugins.users.playwright import PlaywrightUser, pw, PageWithRetry, event
 
 from opentelemetry import context, baggage, trace
+from opentelemetry.metrics import set_meter_provider
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.jinja2 import Jinja2Instrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
 from opentelemetry.instrumentation.urllib3 import URLLib3Instrumentor
+from playwright.async_api import Route, Request
+
+exporter = OTLPMetricExporter(insecure=True)
+set_meter_provider(MeterProvider([PeriodicExportingMetricReader(exporter)]))
 
 tracer_provider = TracerProvider()
 trace.set_tracer_provider(tracer_provider)
 tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
 
 # Instrumenting manually to avoid error with locust gevent monkey
+Jinja2Instrumentor().instrument()
 RequestsInstrumentor().instrument()
+SystemMetricsInstrumentor().instrument()
 URLLib3Instrumentor().instrument()
 
 categories = [
@@ -67,7 +81,7 @@ class WebsiteUser(HttpUser):
         params = {
             "productIds": [random.choice(products)],
         }
-        self.client.get("/api/recommendations/", params=params)
+        self.client.get("/api/recommendations", params=params)
 
     @task(3)
     def get_ads(self):
@@ -118,3 +132,43 @@ class WebsiteUser(HttpUser):
         ctx = baggage.set_baggage("synthetic_request", "true")
         context.attach(ctx)
         self.index()
+
+
+browser_traffic_enabled = os.environ.get("LOCUST_BROWSER_TRAFFIC_ENABLED", "").lower() in ("true", "yes", "on")
+
+if browser_traffic_enabled:
+    class WebsiteBrowserUser(PlaywrightUser):
+        headless = True  # to use a headless browser, without a GUI
+
+        @task
+        @pw
+        async def open_cart_page_and_change_currency(self, page: PageWithRetry):
+            try:
+                page.on("console", lambda msg: print(msg.text))
+                await page.route('**/*', add_baggage_header)
+                await page.goto("/cart", wait_until="domcontentloaded")
+                await page.select_option('[name="currency_code"]', 'CHF')
+                await page.wait_for_timeout(2000)  # giving the browser time to export the traces
+            except:
+                pass
+
+        @task
+        @pw
+        async def add_product_to_cart(self, page: PageWithRetry):
+            try:
+                page.on("console", lambda msg: print(msg.text))
+                await page.route('**/*', add_baggage_header)
+                await page.goto("/", wait_until="domcontentloaded")
+                await page.click('p:has-text("Roof Binoculars")', wait_until="domcontentloaded")
+                await page.click('button:has-text("Add To Cart")', wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)  # giving the browser time to export the traces
+            except:
+                pass
+
+
+async def add_baggage_header(route: Route, request: Request):
+    headers = {
+        **request.headers,
+        'baggage': 'synthetic_request=true'
+    }
+    await route.continue_(headers=headers)
