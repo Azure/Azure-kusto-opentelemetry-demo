@@ -30,9 +30,9 @@ exporters:
 service:
   pipelines:
     traces:
-      exporters: [azuredataexplorer]
+      exporters: [azuredataexplorer, spanmetrics]
     metrics:
-      exporters: [azuredataexplorer, prometheus]
+      exporters: [azuredataexplorer]
     logs:
       receivers: [otlp]
       exporters: [ azuredataexplorer]
