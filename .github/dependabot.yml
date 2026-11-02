@@ -8,3 +8,5 @@ updates:
       interval: "daily"
     labels:
       - "infra"
+    cooldown:
+      default-days: 7
